@@ -1,0 +1,515 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Caption("6247 Auto Backflush at PO Receipts - Error Log")
+Gui.Form..Size(15360,10695)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..MousePointer(0)
+Gui.Form..Event(UnLoad,Form_UnLoad)
+Gui.Form.gsErr.Create(GsGridControl)
+Gui.Form.gsErr.Size(15060,9570)
+Gui.Form.gsErr.Position(120,495)
+Gui.Form.gsErr.Anchor(15)
+Gui.Form.gsErr.Event(RowCellClick,gsErr_RowCellClick)
+Gui.Form.cmdRefresh.Create(Button)
+Gui.Form.cmdRefresh.Size(855,375)
+Gui.Form.cmdRefresh.Position(135,45)
+Gui.Form.cmdRefresh.Caption("Refresh")
+Gui.Form.cmdRefresh.Event(Click,cmdRefresh_Click)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+'Program.External.Include.Library("450100.lib")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try			
+		
+	'PO Receipt Pre-Save hook
+	f.Intrinsic.Control.If(v.Caller.Hook,=,15041)
+		F.ODBC.Connection!conx.OpenCompanyConnection(500)
+		f.Intrinsic.Control.CallSub(Check_Table)
+		f.Intrinsic.Control.CallSub(Load_Bdf)	
+		f.Intrinsic.Control.CallSub(Unload)
+	f.Intrinsic.Control.Else
+		F.ODBC.Connection!conx.OpenCompanyConnection(500)
+		f.Intrinsic.Control.CallSub(Check_Table)		
+		F.Data.Dictionary.Create("dRowWrap")
+		f.Data.Dictionary.AddItem("dRowWrap",-1,True)
+		f.Data.Dictionary.SetDefaultReturn("dRowWrap",False)
+		f.Intrinsic.Control.CallSub(Load_Error_Log)
+		gui.Form..Visible(True)
+	f.Intrinsic.Control.EndIf	
+	
+f.Intrinsic.Control.Catch
+	f.Intrinsic.Control.CallSub("Catching","sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry	
+
+Program.Sub.Main.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.Try	
+	
+	F.ODBC.Connection!conx.Close
+	F.Intrinsic.Control.End 
+	
+f.Intrinsic.Control.Catch
+	F.Intrinsic.Control.End 
+f.Intrinsic.Control.EndTry	
+Program.Sub.Unload.End
+
+Program.Sub.Catching.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+	
+	F.Intrinsic.String.Build("Project: GCG_6247_AutoBackFlush.g2u {0}Subroutine: {1}{0}Error Occurred {2} with description {3}{0}GAB Version: {4}",V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	
+	f.Intrinsic.Control.CallSub(Unload)
+	
+f.Intrinsic.Control.Catch
+	f.Intrinsic.Control.End
+f.Intrinsic.Control.EndTry
+Program.Sub.Catching.End
+
+Program.Sub.Validate_WO.Start
+'Check if there is WO and the WO is valid
+'if this is the last sequence (other than 99XXXX) and this is the outside sequence of the WO
+F.Intrinsic.Control.Try	
+	v.Local.sSQL.Declare
+	V.Local.sRet.Declare
+	v.Local.bValid.Declare
+	v.Local.fHoursEstimated.Declare
+	
+	f.Intrinsic.String.Build("Select Top 1 Hours_Estimated from V_Job_Operations where Job = '{0}' and Suffix = '{1}' and Seq = '{2}' and LMO = 'O'",v.Args.sJob,v.Args.sSuffix,v.Args.sSeq,v.Local.sSQL)	
+	f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+	f.Intrinsic.Control.If(v.Ambient.ExecuteAndReturnEOF.Not)
+		
+		v.Local.fHoursEstimated.Set(v.Local.sRet)
+		f.Intrinsic.String.Build("Select Top 1 Seq from V_Job_Operations where Job = '{0}' and Suffix = '{1}' and Seq < '990000'  order by Seq desc",v.Args.sJob,v.Args.sSuffix,v.Local.sSQL)	
+		f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+		f.Intrinsic.Control.If(v.Ambient.ExecuteAndReturnEOF.Not)
+			f.Intrinsic.Control.If(v.Local.sRet,=,v.Args.sSeq)
+				v.Local.bValid.Set(True)
+			f.Intrinsic.Control.EndIf			
+		f.Intrinsic.Control.EndIf
+		
+	f.Intrinsic.Control.EndIf
+	f.Intrinsic.Variable.AddRV("bValid",v.Local.bValid)
+	f.Intrinsic.Variable.AddRV("fHoursEstimated",v.Local.fHoursEstimated)
+	
+f.Intrinsic.Control.Catch
+	f.Intrinsic.Control.CallSub("Catching","sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Validate_WO.End
+
+Program.Sub.Check_Table.Start
+F.Intrinsic.Control.Try	
+	v.Local.bExist.Declare
+	
+	F.ODBC.Connection!conx.TableExists("GCG_6247_Log",V.Local.bExist)
+	F.Intrinsic.Control.If(V.Local.bExist.Not)
+		F.ODBC.Connection!conx.Execute("CREATE TABLE GCG_6247_Log ( UserID CHAR(8), LogDate DATE, LogTime CHAR(6), Job CHAR(6), Suffix CHAR(3), Seq CHAR(6), Part CHAR(20), Loc CHAR(2), Qty NUMERIC(16,6), Lot CHAR(15), Bin CHAR(6), Heat CHAR(15), Serial CHAR(30), Success BIT DEFAULT '0' NOT NULL, Reason VARCHAR(500) );")
+	F.Intrinsic.Control.EndIf	
+	
+f.Intrinsic.Control.Catch
+	f.Intrinsic.Control.CallSub("Catching","sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Check_Table.End
+
+Program.Sub.Load_Bdf.Start
+F.Intrinsic.Control.Try	
+	V.Local.iRow.Declare
+	V.Local.iC.Declare
+	V.Local.sReadRow.Declare
+	V.Local.sSQL.Declare
+	V.Local.sLine.Declare
+	v.Local.sRet.Declare
+	v.Local.sPart.Declare
+	v.Local.sLoc.Declare
+	v.Local.sPO.Declare
+	v.Local.fQtyReceived.Declare
+	v.Local.sJob.Declare
+	v.Local.sSuffix.Declare
+	v.Local.sSeq.Declare
+	v.Local.fQty_Order.Declare
+	v.Local.fPercentage.Declare	
+	v.Local.iInner.Declare
+	v.Local.bLotBin.Declare
+	v.Local.fQtyToIssue.Declare
+	v.Local.fQtyOnLotBin.Declare
+	v.Local.fQtyEstimate.Declare
+	
+	v.Local.sLot.Declare
+	v.Local.sBin.Declare
+	v.Local.sHeat.Declare
+	v.Local.sSerial.Declare
+	v.Local.fQtyOnhand.Declare
+
+	
+	F.Intrinsic.BDF.Load("AUX001","AUX001")
+	F.Intrinsic.BDF.Clone("AUX001","Clone")
+	F.Intrinsic.BDF.ReadRowCount("AUX001",V.Local.iRow)
+	F.Intrinsic.Math.Sub(V.Local.iRow,1,V.Local.iRow)
+	F.Intrinsic.Control.For(V.Local.iC,0,V.Local.iRow,1)
+		'Read row and check for additional qty
+		F.Intrinsic.BDF.ReadRow("AUX001",V.Local.iC,V.Local.sReadRow)
+		F.Intrinsic.String.Split(V.Local.sReadRow,"|~|",V.Local.sReadRow)
+		v.Local.sLine.Set(v.Local.sReadRow(0).Trim)
+		v.Local.fQtyReceived.Set(v.Local.sReadRow(14).Trim)
+		'Get WO
+		f.Intrinsic.String.LPad(v.Local.sLine,"0",3,v.Local.sLine)
+		f.Intrinsic.String.RPad(v.Local.sLine,"0",4,v.Local.sLine)
+		f.Intrinsic.String.LPad(v.Passed.000002,"0",7,v.Local.sPO)
+		f.Intrinsic.String.Build("Select Top 1 Job,Suffix,Sequence,Qty_Order from V_PO_Lines where Purchase_Order = '{0}' and Record_No = '{1}'",v.Local.sPO,v.Local.sLine,v.Local.sSQL)
+		f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+		f.Intrinsic.Control.If(v.Ambient.ExecuteAndReturnEOF.Not)
+			f.Intrinsic.String.Split(v.Local.sRet,"*!*",v.Local.sRet)			
+			v.Local.sJob.Set(v.Local.sRet(0))
+			v.Local.sSuffix.Set(v.Local.sRet(1))
+			v.Local.sSeq.Set(v.Local.sRet(2))
+			v.Local.fQty_Order.Set(v.Local.sRet(3))
+			
+			f.Intrinsic.Control.If(v.Local.fQtyReceived,>,0)						
+			
+				f.Intrinsic.Control.CallSub(Validate_WO,"sJob",v.Local.sJob,"sSuffix",v.Local.sSuffix,"sSeq",v.Local.sSeq)
+				f.Intrinsic.Control.If(v.Args.bValid)	
+	
+				
+					f.Intrinsic.Control.If(v.Args.fHoursEstimated,<=,0)
+						f.Intrinsic.UI.Msgbox("Quantiy on Outside sequence of the WO is negative. Please contact Administrator to fix this. PO cannot be received.")
+						v.Passed.777777.Set(1)
+						f.Intrinsic.Control.CallSub(Unload)			
+				
+					f.Intrinsic.Control.ElseIf(v.Args.fHoursEstimated,>,0)
+						''''''''Not in use now'''''''''''''''
+						'Get Percentage Receive
+						'f.Intrinsic.Control.If(v.Local.fQty_Order,<>,0)
+							'f.Intrinsic.Control.If(v.Local.fQtyReceived,>,v.Local.fQty_Order)
+								'v.Local.fPercentage.Set(1)
+							'f.Intrinsic.Control.Else
+								'f.Intrinsic.Math.Div(v.Local.fQtyReceived,v.Local.fQty_Order,v.Local.fPercentage)					
+							'f.Intrinsic.Control.EndIf				
+						'f.Intrinsic.Control.else	
+							'v.Local.fPercentage.Set(1)				
+						'f.Intrinsic.Control.EndIf
+						'''''''''''''''''''''''''''''''''''''
+						
+						
+						
+						'Get Material requirements of all Material in WO
+						f.Intrinsic.Control.If(v.DataTable.Issue.Exists)
+							f.Data.DataTable.Close("Issue")				
+						f.Intrinsic.Control.EndIf
+						f.Intrinsic.String.Build("select part,locn as Location,Job,Suffix,Seq as Sequence,Hours_Estimated as fQtyEstimate,Hours_Actual from v_job_operations where job = '{0}' and Suffix = '{1}' and LMO = 'M' and Seq < '990000' order by Seq",v.Local.sJob,v.Local.sSuffix,v.Local.sSQL)
+						f.Data.DataTable.CreateFromSQL("Issue","conx",v.Local.sSQL,True)
+						
+						'For each material, get the Lot/Bin flag. If 'Y', then use Lot/Bin to issue, else issue normal
+						f.Intrinsic.Control.For(v.Local.iInner,0,v.DataTable.Issue.RowCount--,1)
+							'Check Lot/Bin
+							v.Local.sPart.Set(v.DataTable.Issue(v.Local.iInner).Part!FieldValString)
+							v.Local.sLoc.Set(v.DataTable.Issue(v.Local.iInner).Location!FieldValString)
+							'Calculate Qty to issue = percentage * qty Material					
+							
+							v.Local.fQtyEstimate.Set(v.DataTable.Issue(v.Local.iInner).fQtyEstimate!FieldValString)
+							f.Intrinsic.Math.Div(v.Local.fQtyEstimate,v.Args.fHoursEstimated,v.Local.fPercentage)
+							f.Intrinsic.Math.Mult(v.Local.fPercentage,v.Local.fQtyReceived,v.Local.fQtyToIssue)
+							
+							
+							F.Intrinsic.String.Build("SELECT FLAG_LOT FROM V_INVENTORY_MSTR WHERE PART = '{0}' and location = '{1}'",v.Local.sPart.PSQLFriendly,v.Local.sLoc,V.Local.sSQL)
+							f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+							f.Intrinsic.Control.If(v.Ambient.ExecuteAndReturnEOF.Not)
+								f.Intrinsic.Control.If(v.Local.sRet.Trim,=,"Y")
+									v.Local.bLotBin.Set(True)
+								f.Intrinsic.Control.Else
+									v.Local.bLotBin.Set(False)
+								f.Intrinsic.Control.EndIf
+							f.Intrinsic.Control.Else
+								v.Local.bLotBin.Set(False)
+							f.Intrinsic.Control.EndIf
+							
+							'This case the part is flaged as Lot/Bin
+							f.Intrinsic.Control.If(v.Local.bLotBin)					
+								F.Intrinsic.String.Build("SELECT LOT,BIN,HEAT,SERIAL_NUMBER, QUANTITY  FROM V_ITEM_MASTER WHERE PART = '{0}' and location = '{1}' AND QUANTITY > 0 ORDER BY QUANTITY DESC",v.Local.sPart,v.Local.sLoc,v.Local.sSQL)
+								f.Intrinsic.Control.If(v.DataTable.dtLot.Exists)
+									f.Data.DataTable.Close("dtLot")
+								f.Intrinsic.Control.EndIf
+								F.Data.DataTable.CreateFromSQL("dtLot","conx",V.Local.sSQL,True)
+								f.Intrinsic.Control.If(v.DataTable.dtLot.RowCount,>,0)
+									v.Local.sLot.Set(v.DataTable.dtLot(0).Lot!FieldValString)
+									v.Local.sBin.Set(v.DataTable.dtLot(0).Bin!FieldValString)
+									v.Local.sHeat.Set(v.DataTable.dtLot(0).Heat!FieldValString)
+									v.Local.sSerial.Set(v.DataTable.dtLot(0).Serial_Number!FieldValString)
+									v.Local.fQtyOnLotBin.Set(v.DataTable.dtLot(0).Quantity!FieldValString)
+									
+									f.Intrinsic.Control.If(v.Local.fQtyToIssue,>,v.Local.fQtyOnLotBin)
+										'Error Message Not Enough qty on LotBin and Log file
+										F.Intrinsic.Control.CallSub("WriteLog","Job",v.Local.sJob,"Suffix",v.Local.sSuffix,"Seq",v.Local.sSeq,"Part",v.Local.sPart,"Loc",v.Local.sLoc,"Qty",v.Local.fQtyToIssue,"Lot",v.Local.sLot,"Bin",v.Local.sBin,"Heat",v.Local.sHeat,"Serial",v.Local.sSerial,"Success",0,"Reason","Has Lot/Bin record but Not Enough qty on LotBin and Log file")
+									f.Intrinsic.Control.Else
+										f.Intrinsic.Control.CallSub(CheckLockFile,"sJob",v.Local.sJob,"sSuffix",v.Local.sSuffix)
+										f.Intrinsic.Control.If(v.Args.bLock)
+											'Error Message WO Is Locked by user
+											F.Intrinsic.Control.CallSub("WriteLog","Job",v.Local.sJob,"Suffix",v.Local.sSuffix,"Seq",v.Local.sSeq,"Part",v.Local.sPart,"Loc",v.Local.sLoc,"Qty",v.Local.fQtyToIssue,"Lot",v.Local.sLot,"Bin",v.Local.sBin,"Heat",v.Local.sHeat,"Serial",v.Local.sSerial,"Success",0,"Reason","Has Lot/Bin record, about to Issue but WO Is Locked by user")
+										f.Intrinsic.Control.Else
+											''''''Issue Material from LotBin and Log file
+											F.Intrinsic.Control.CallSub(IssueMaterial,"fIssue",v.Local.fQtyToIssue,"sPart",v.Local.sPart,"sLoc",v.Local.sLoc,"sJob",v.Local.sJob,"sSuffix",v.Local.sSuffix,"sSeq",V.DataTable.Issue(V.Local.iInner).SEQUENCE!FieldValString,"sBin",v.Local.sBin,"sHeat",v.Local.sHeat,"sLot",v.Local.sLot,"sSerial",v.Local.sSerial)
+										f.Intrinsic.Control.EndIf								
+										
+									f.Intrinsic.Control.EndIf
+									
+								f.Intrinsic.Control.Else
+									'Error message No LotBin and Log file
+									F.Intrinsic.Control.CallSub("WriteLog","Job",v.Local.sJob,"Suffix",v.Local.sSuffix,"Seq",v.Local.sSeq,"Part",v.Local.sPart,"Loc",v.Local.sLoc,"Qty",v.Local.fQtyToIssue,"Lot",v.Local.sLot,"Bin",v.Local.sBin,"Heat",v.Local.sHeat,"Serial",v.Local.sSerial,"Success",0,"Reason","Part is flaged Lot/Bin but there is no Lot/Bin record found")
+								f.Intrinsic.Control.EndIf
+							
+							'This case when the part is not flagged as Lot/Bin
+							f.Intrinsic.Control.Else
+							
+								'Check if there is enough onhand
+								F.Intrinsic.String.Build("SELECT Qty_Onhand FROM V_INVENTORY_MSTR WHERE PART = '{0}' and location = '{1}'",v.Local.sPart.PSQLFriendly,v.Local.sLoc,V.Local.sSQL)
+								f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.fQtyOnhand)
+								f.Intrinsic.Control.If(v.Local.fQtyToIssue,>,v.Local.fQtyOnhand)
+									'Error message not enough onhand Qty and Log file	
+									F.Intrinsic.Control.CallSub("WriteLog","Job",v.Local.sJob,"Suffix",v.Local.sSuffix,"Seq",v.Local.sSeq,"Part",v.Local.sPart,"Loc",v.Local.sLoc,"Qty",v.Local.fQtyToIssue,"Lot",v.Local.sLot,"Bin",v.Local.sBin,"Heat",v.Local.sHeat,"Serial",v.Local.sSerial,"Success",0,"Reason","Part is not flagged as Lot/Bin, about to Issue but Not Enough Onhand")
+						
+								f.Intrinsic.Control.Else
+								
+									f.Intrinsic.Control.CallSub(CheckLockFile,"sJob",v.Local.sJob,"sSuffix",v.Local.sSuffix)
+									f.Intrinsic.Control.If(v.Args.bLock)
+										'Error Message WO Is Locked by user
+										F.Intrinsic.Control.CallSub("WriteLog","Job",v.Local.sJob,"Suffix",v.Local.sSuffix,"Seq",v.Local.sSeq,"Part",v.Local.sPart,"Loc",v.Local.sLoc,"Qty",v.Local.fQtyToIssue,"Lot",v.Local.sLot,"Bin",v.Local.sBin,"Heat",v.Local.sHeat,"Serial",v.Local.sSerial,"Success",0,"Reason","Part is not flagged as Lot/Bin, about to Issue but WO Is Locked by user")							
+									f.Intrinsic.Control.Else
+										'------Issue Material from LotBin and Log file
+										'f.Intrinsic.UI.Msgbox("Issue Material  and Log file")
+										F.Intrinsic.Control.CallSub(IssueMaterial,"fIssue",v.Local.fQtyToIssue,"sPart",v.Local.sPart,"sLoc",v.Local.sLoc,"sJob",v.Local.sJob,"sSuffix",v.Local.sSuffix,"sSeq",V.DataTable.Issue(V.Local.iInner).SEQUENCE!FieldValString,"sBin","","sHeat","","sLot","","sSerial","")
+									f.Intrinsic.Control.EndIf						
+								f.Intrinsic.Control.EndIf
+							f.Intrinsic.Control.EndIf					
+							
+						f.Intrinsic.Control.Next(v.Local.iInner)
+						
+					f.Intrinsic.Control.EndIf	
+			
+				f.Intrinsic.Control.EndIf
+			
+			f.Intrinsic.Control.EndIf
+			
+		f.Intrinsic.Control.EndIf
+		
+	f.Intrinsic.Control.Next(v.Local.iC)	
+	
+f.Intrinsic.Control.Catch
+	f.Intrinsic.Control.CallSub("Catching","sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Load_Bdf.End
+
+Program.Sub.CheckLockFile.Start
+F.Intrinsic.Control.Try
+	V.Local.sJob.Declare
+	V.Local.sSQL.Declare
+	V.Local.sSuffix.Declare
+	v.Local.bLock.Declare
+	v.Local.sRet.Declare
+
+	F.Intrinsic.String.Build("select user_id from x_lock_file where company = '{0}' and lock_type = 'WO' and rec_key = '{1}-{2}'",V.Caller.CompanyCode,V.Args.sJob,V.Args.sSuffix,V.Local.sSQL)
+	F.ODBC.Connection!conx.ExecuteAndReturn(V.Local.sSQL,v.Local.sRet)
+	F.Intrinsic.Control.If(v.Ambient.ExecuteAndReturnEOF.Not)
+		V.Local.bLock.Set(True)
+	F.Intrinsic.Control.EndIf
+	f.Intrinsic.Variable.AddRV("bLock",v.Local.bLock)
+
+f.Intrinsic.Control.Catch
+	f.Intrinsic.Control.CallSub("Catching","sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.CheckLockFile.End
+
+Program.Sub.IssueMaterial.Start
+F.Intrinsic.Control.Try
+	V.Local.dIssued.Declare
+	V.Local.fQtyIssued.Declare
+	V.Local.sBin.Declare
+	V.Local.sHeat.Declare
+	V.Local.sIssueDate.Declare
+	V.Local.sLot.Declare
+	
+	V.Local.sQtyIssue.Declare
+	V.Local.sSQL.Declare
+	V.Local.sSerial.Declare
+	V.Local.sUser.Declare
+	V.Local.sErrorLog.Declare
+	V.Local.sErrorMessage.Declare
+	V.Local.sTranTimeBegin.Declare
+	V.Local.sTranTimeEnd.Declare
+	
+	V.Local.sPart.Declare
+	v.Local.sLoc.Declare
+	v.Local.sJob.Declare
+	v.Local.sSuffix.Declare
+	v.Local.sSeq.Declare
+	v.Local.sRet.Declare
+	v.Local.sRev.Declare
+	
+	'Lot/bin information if the part is flagged as lot/bin
+	v.Local.sPart.Set(v.Args.sPart)
+	f.Intrinsic.String.Mid(v.Local.sPart,18,3,v.Local.sRev)
+	v.Local.sLoc.Set(v.Args.sLoc)
+	v.Local.sJob.Set(v.Args.sJob)
+	v.Local.sSuffix.Set(v.Args.sSuffix)
+	v.Local.sSeq.Set(v.Args.sSeq)			
+	V.Local.sBin.Set(V.Args.sBin)
+	V.Local.sHeat.Set(V.Args.sHeat)
+	V.Local.sLot.Set(V.Args.sLot)
+	V.Local.sSerial.Set(V.Args.sSerial)	
+	V.Local.sFile.Declare
+	v.Local.sContent.Declare
+	v.Local.sIssueString.Declare
+	v.Local.sParam.Declare
+	
+	F.Intrinsic.String.Format(V.Args.fIssue,"0.00",V.Local.sQtyIssue)
+	
+	F.Intrinsic.String.Format(V.Ambient.Now,"HhNnSs00",V.Local.sTranTimeBegin)
+	
+	'''''''''''
+	F.Intrinsic.String.Build("{0}{11},{11}{1}{11},{11}{2}{11},{11}{3}{11},{11}{4}{11},{11}{5}{11},{11}{6}{11},{11}{7}{11},{11}{8}{11},{11}{9}{11},{11}{10}",V.Local.sPart,V.Local.sRev,V.Local.sLoc,v.Local.sQtyIssue,V.Local.sLot,V.Local.sBin,V.Local.sHeat,V.Local.sSerial,v.Local.sJob,v.Local.sSuffix,v.Local.sSeq,V.Ambient.DblQuote,V.Local.sIssueString)
+	
+	F.Intrinsic.String.Build("{0}\Z{1}ISSMAT{2}",V.Caller.FilesDir,V.Caller.CompanyCode,V.Caller.Terminal,V.Local.sFile)
+	
+	'Write the file
+	F.Intrinsic.File.String2File(V.Local.sFile,V.Local.sIssueString)
+	'Build parameters
+	F.Intrinsic.String.Build("Z{0}ISSMAT{1}!*!{2}!*!NS",V.Caller.CompanyCode,V.Caller.Terminal,V.Local.sIssueString,V.Local.sParam)
+	
+	F.Global.General.CallWrapperSync(450100,V.Local.sParam)
+	''''''''''''''''''	
+	
+	F.Intrinsic.UI.Sleep(1)
+	
+'	'Part, Rev, Loc, Qty, Lot, Bin, Heat, Serial, Job, Suffix, Seq
+'	f.Intrinsic.String.Build("{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10}",v.Local.sPart.left17, v.Local.sRev, v.Local.sLoc, v.Local.sQtyIssue, v.Local.sLot, v.Local.sBin, v.Local.sHeat, v.Local.sSerial, v.Local.sJob, v.Local.sSuffix, v.Local.sSeq,v.Local.sContent)
+
+'	f.Intrinsic.String.Build("{0}\L{1}{2}MOPEN.txt",v.Caller.FilesDir,v.Caller.CompanyCode,v.Caller.Terminal,v.Local.sFile)
+'	F.Intrinsic.File.String2File(V.Local.sFile,V.Local.sContent)
+'	
+'	f.Global.General.CallWrapperSync(450100,v.Local.sFile)
+	
+	
+	'Preparing the file format
+'	F.Data.DataTable.AddRow("450100","Part",v.Local.sPart,"Location",v.Local.sLoc,"Quantity",V.Local.sQtyIssue,"Lot",V.Local.sLot.Trim,"Bin",V.Local.sBin.Trim,"Heat",V.Local.sHeat.Trim,"Serial",V.Local.sSerial.Trim,"WONumber",v.Local.sJob,"WOSuffix",v.Local.sSuffix,"WOSeq",v.Local.sSeq)
+'	F.Intrinsic.Control.CallSub(450100Sync)
+	
+	F.Intrinsic.String.Format(V.Ambient.Now,"HhNnSs00",V.Local.sTranTimeEnd)
+	
+	'Check for successful processing of transactions
+	F.Intrinsic.String.Format(V.Ambient.Date,"YYMMDD",V.Local.sIssueDate)
+	V.Local.dIssued.Set(V.Ambient.Date)
+	F.Intrinsic.Math.Mult(-1,V.Args.fIssue,V.Local.fQtyIssued)
+	V.Local.sUser.Set(V.Caller.User)
+	F.Intrinsic.String.Build("select part from inventory_hist where date_history = '{0}' and part = '{1}' and location = '{2}' and job = '{3}' and suffix = '{4}' and seq = '{5}' and quantity = {6} and userid = '{7}' and inv_hist_time >= '{8}' and inv_hist_time <= '{9}' and code_transaction = 'J55'",V.Local.sIssueDate.Trim,v.Local.sPart.PSQLFriendly,v.Local.sLoc,v.Local.sJob,v.Local.sSuffix,v.Local.sSeq,V.Local.fQtyIssued,V.Local.sUser.Trim,V.Local.sTranTimeBegin,V.Local.sTranTimeEnd,V.Local.sSQL)
+	F.ODBC.Connection!conx.ExecuteAndReturn(V.Local.sSQL,v.Local.sRet)
+	
+	'There is a record in Inventory_Hist
+	F.Intrinsic.Control.If(v.Ambient.ExecuteAndReturnEOF.Not)
+		'Check JOB_TRANS_ERR if issue is failed
+		F.Intrinsic.String.Build("select Top 1 description, msg_id, filename from v_job_trans_err where job = '{0}' and suffix = '{1}' and seq = '{2}' and part = '{3}' and loc = '{4}' and tran_date = '{5}' and err_time >= '{6}' and err_time <= '{7}' and program = 'JB0320'",v.Local.sJob,v.Local.sSuffix,v.Local.sSeq,v.Local.sPart.PSQLFriendly,v.Local.sLoc,V.Local.dIssued.PervasiveDate,V.Local.sTranTimeBegin,V.Local.sTranTimeEnd,V.Local.sSQL)
+		F.ODBC.Connection!conx.ExecuteAndReturn(V.Local.sSQL,v.Local.sRet)
+		'There is record in Job_Trans_Err
+		F.Intrinsic.Control.If(v.Ambient.ExecuteAndReturnEOF.Not)
+			f.Intrinsic.String.Split(v.Local.sRet,"*!*",v.Local.sRet)
+			F.Intrinsic.String.Build("Issue failed because of MSG_ID = {0}; FILENAME = {1}",v.Local.sRet(0).Trim,v.Local.sRet(1).Trim,V.Local.sErrorMessage)					
+			F.Intrinsic.Control.CallSub("WriteLog","Job",v.Local.sJob,"Suffix",v.Local.sSuffix,"Seq",v.Local.sSeq,"Part",v.Local.sPart,"Loc",v.Local.sLoc,"Qty",v.Local.sQtyIssue,"Lot",v.Local.sLot,"Bin",v.Local.sBin,"Heat",v.Local.sHeat,"Serial",v.Local.sSerial,"Success",0,"Reason",V.Local.sErrorMessage)
+		f.Intrinsic.Control.Else
+			'Success
+			F.Intrinsic.Control.CallSub("WriteLog","Job",v.Local.sJob,"Suffix",v.Local.sSuffix,"Seq",v.Local.sSeq,"Part",v.Local.sPart,"Loc",v.Local.sLoc,"Qty",v.Local.sQtyIssue,"Lot",v.Local.sLot,"Bin",v.Local.sBin,"Heat",v.Local.sHeat,"Serial",v.Local.sSerial,"Success",1,"Reason","")
+		F.Intrinsic.Control.EndIf	
+		
+	'There is no record in Inventory_Hist	
+	F.Intrinsic.Control.Else
+		'Transaction is not successful
+		V.Local.sErrorMessage.Set("Issue failed because of unknown reason; NOT RECORDED in INVENTORY HISTORY")	
+		F.Intrinsic.Control.CallSub("WriteLog","Job",v.Local.sJob,"Suffix",v.Local.sSuffix,"Seq",v.Local.sSeq,"Part",v.Local.sPart,"Loc",v.Local.sLoc,"Qty",v.Local.sQtyIssue,"Lot",v.Local.sLot,"Bin",v.Local.sBin,"Heat",v.Local.sHeat,"Serial",v.Local.sSerial,"Success",0,"Reason",V.Local.sErrorMessage)
+	F.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.Catch
+	f.Intrinsic.Control.CallSub("Catching","sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.IssueMaterial.End
+
+Program.Sub.WriteLog.Start
+F.Intrinsic.Control.Try
+	V.Local.sPart.Declare
+	v.Local.sReason.Declare
+	v.Local.sSQL.Declare
+	
+	v.Local.sPart.Set(v.Args.Part)
+	f.Intrinsic.String.Left(v.Args.Reason,500,v.Local.sReason)
+	
+	f.Intrinsic.String.Build("Insert into GCG_6247_Log (UserID,LogDate,LogTime,Job,Suffix,Seq,Part,Loc,Qty,Lot,Bin,Heat,Serial,Success,Reason) values ('{0}','{1}','{2}','{3}','{4}','{5}','{6}','{7}','{8}','{9}','{10}','{11}','{12}','{13}','{14}')",v.Caller.User,v.Ambient.Date.PervasiveDate,v.Ambient.Now.FormatHHNNSS,v.Args.Job,v.Args.Suffix,v.Args.Seq,v.Local.sPart.PSQLFriendly,v.Args.Loc,v.Args.Qty,v.Args.Lot,v.Args.Bin,v.Args.Heat,v.Args.Serial,v.Args.Success,v.Local.sReason.PSQLFriendly,v.Local.sSQL)
+	f.ODBC.Connection!conx.Execute(v.Local.sSQL)
+	
+F.Intrinsic.Control.Catch
+	f.Intrinsic.Control.CallSub("Catching","sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry	
+Program.Sub.WriteLog.End
+
+Program.Sub.cmdRefresh_Click.Start
+f.Intrinsic.Control.CallSub(Load_Error_Log)
+Program.Sub.cmdRefresh_Click.End
+
+Program.Sub.Form_UnLoad.Start
+f.Intrinsic.Control.CallSub(Unload)
+Program.Sub.Form_UnLoad.End
+
+Program.Sub.Load_Error_Log.Start
+F.Intrinsic.Control.Try
+	
+	f.Intrinsic.Control.If(v.DataTable.Err.Exists)
+		f.Data.DataTable.Close("Err")
+	f.Intrinsic.Control.EndIf
+	f.Data.DataTable.CreateFromSQL("Err","conx","Select UserID,LogDate,LogTime,Job,Suffix,Seq,Part,Loc,Qty,Lot,Bin,Heat,Serial,Success,Reason from GCG_6247_Log Order by LogDate desc, LogTime desc",True)
+	gui.Form.gsErr.AddGridviewFromDatatable("gvErr","Err")
+
+	Gui.Form.gsErr.SetGridViewProperty("gvErr","AllowSort",True)
+	Gui.Form.gsErr.SetGridViewProperty("gvErr","AllowFilter",True)
+	Gui.Form.gsErr.SetGridViewProperty("gvErr","OptionsFindAlwaysVisible",True)
+	Gui.Form.gsErr.SetGridViewProperty("gvErr","EnableAppearanceOddRow",False)
+	Gui.Form.gsErr.SetGridViewProperty("gvErr","OptionsViewShowAutoFilterRow",True)
+	Gui.Form.gsErr.SetGridViewProperty("gvErr","AllowColumnResizing",True)
+	Gui.Form.gsErr.SetGridViewProperty("gvErr","OptionsViewColumnAutoWidth",False)
+	Gui.Form.gsErr.SetGridViewProperty("gvErr","Showgrouppanel",True)
+	Gui.Form.gsErr.SetGridViewProperty("gvErr","OptionsViewRowAutoHeight",True)
+	
+	gui.Form.gsErr.SetColumnProperty("gvErr","Success","HeaderHAlignment","center")
+	gui.Form.gsErr.SetColumnProperty("gvErr","Reason","AllowEdit",False)
+	gui.Form.gsErr.SetColumnProperty("gvErr","Reason","ReadOnly",True)
+	
+	'Gui.Form.gsErr.SetRowAppearance("gvErr",0,"WordWrap","wrap") 
+
+	gui.Form.gsErr.MainView("gvErr")
+	
+F.Intrinsic.Control.Catch
+	f.Intrinsic.Control.CallSub("Catching","sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry	
+Program.Sub.Load_Error_Log.End
+
+Program.Sub.gsErr_RowCellClick.Start
+F.Intrinsic.Control.Try
+	
+	f.Intrinsic.Control.If(v.Args.Column.UCase,=,"REASON")
+		f.Intrinsic.Control.If(v.Dictionary.dRowWrap![v.Args.RowIndex])
+			Gui.Form.gsErr.SetRowAppearance("gvErr",v.Args.RowIndex,"WordWrap","nowrap")
+			f.Data.Dictionary.RemoveItem("dRowWrap",v.Args.RowIndex)
+		f.Intrinsic.Control.Else
+			Gui.Form.gsErr.SetRowAppearance("gvErr",v.Args.RowIndex,"WordWrap","wrap")
+			f.Data.Dictionary.AddItem("dRowWrap",v.Args.RowIndex,True)
+		f.Intrinsic.Control.EndIf	
+		 
+	f.Intrinsic.Control.EndIf
+	
+F.Intrinsic.Control.Catch
+	f.Intrinsic.Control.CallSub("Catching","sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry	
+Program.Sub.gsErr_RowCellClick.End
+
+
